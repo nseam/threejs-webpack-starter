@@ -17,7 +17,15 @@ const geometry = new THREE.TorusGeometry( .7, .2, 16, 100 );
 
 // Materials
 
-const material = new THREE.MeshBasicMaterial()
+console.log (document.getElementById('ps').textContent);
+
+const material = new THREE.ShaderMaterial({
+	uniforms: {
+		//cam_rot: new THREE.Vector2(-Math.PI * 0.15f, Math.PI * 0.2f),
+	},
+	vertexShader: document.getElementById('vs').textContent,
+	fragmentShader: document.getElementById('ps').textContent,
+})
 material.color = new THREE.Color(0xff0000)
 
 // Mesh

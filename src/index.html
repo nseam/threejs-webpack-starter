@@ -3,7 +3,223 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ThreeJS Starter</title>
+    <title>Fractal</title>
+		<script id="vs" type="x-shader/x-fragment">
+			uniform mat4 transform;
+			uniform vec3 lightNormal;
+			uniform mat4 texMatrix;
+			uniform float screen_ratio;
+
+			attribute vec4 color;
+			attribute vec2 texCoord;
+
+			varying vec4 vertColor;
+			varying vec3 vertNormal;
+			varying vec3 vertLightDir;
+			varying vec4 vertTexCoord;
+
+
+			void main() {
+				gl_Position = transform * vec4(position, 0.0f);
+				vertColor = color;
+				vertNormal = normalize(normalMatrix * normal);
+				vertLightDir = -lightNormal;
+				vertTexCoord = texMatrix * vec4(texCoord, 1.0, 1.0);
+				vertTexCoord.x *= screen_ratio;
+				// vertTexCoord = texMatrix* vec4(texCoord*vec2(screen_size.x/screen_size.y, 1.), 1.0, 1.0);
+				//   vertTexCoord = texCoord;
+			}
+		</script>
+		<script id="ps" type="x-shader/x-fragment">
+			uniform float time;
+			uniform int iterations;
+			uniform vec3 cam_position;
+			uniform mat4 cam_direction;
+			uniform vec3 light_direction;
+
+			uniform float screen_ratio;
+			uniform int reflection_bounces;
+
+			uniform float cut_position;
+			uniform vec3 cut_direction;
+
+			in vec4 vertColor;
+			in vec3 vertNormal;
+			in vec3 vertLightDir;
+			in vec4 vertTexCoord;
+
+			#define PI 3.14159265359f
+			#define MAX_ITER 200
+			#define MIN_DIST .00001f
+			#define MAX_DIST 500.0f
+			#define EPS .00002f
+
+
+			const mat2 rot60deg = mat2(cos(PI/3.0f), -sin(PI/3.0f), sin(PI/3.0f), cos(PI/3.0f));
+			const mat2 rotm60deg = mat2(cos(PI/3.0f), sin(PI/3.0f), -sin(PI/3.0f), cos(PI/3.0f));
+
+
+			float sdPolyhedron(vec3 p){
+					// if(dot(normalize(p.xz), vec2(1, 0)) < 0.5){
+					// if(abs(p.z) > p.x*tan(PI/3)){
+					if(abs(p.z) > p.x*1.73205081){
+							p.x *= -1.0f;
+							p.xz = (p.z > 0.0f ? rot60deg : rotm60deg) * p.xz;
+					}
+					// float D = abs(p.y)+0.75593*p.x-1.32287;
+					// const float X2 = 0.75593;
+					const float X2 = 1.15470053839f;
+					float D = abs(p.y)+X2*p.x-X2;
+					const float X1 = 1.0f/sqrt(1.0f+X2*X2);
+					D *= X1;
+					return D;
+			}
+
+			// https://www.researchgate.net/publication/262600735_The_Koch_curve_in_three_dimensions
+			vec4 fractal_main(vec3 p, int n){
+					//float s = 1.;
+					float s2 = 1.0f;
+
+					for(int i=0; i<n; i++){
+							// reduce the size by 2/3
+							const float X1 = 2.0f/3.0f;
+							s2 *= X1;
+							p /= X1;
+
+
+							// which part are we in?
+							// if(dot(normalize(p.xz), vec2(-1, 0)) < 0.5){
+							// if(abs(p.z) > -p.x*tan(PI/3)){
+							if(abs(p.z) > -p.x*1.73205081f){
+									// we are in one of the two rotated parts
+									// ...so rotate by 180 degrees
+									p.x *= -1.0f;
+									// the left or the right one? ...so rotate accordingly...
+									p.xz = (p.z > 0.0f ? rotm60deg : rot60deg) * p.xz;
+							}
+							// rotate by 90 degrees on the x axis
+							p.zy = p.yz;
+							// offset the triangle to the side
+							p.x += 1.;
+					} // repeat...
+
+					// calculate the distance...
+					float polyhedron = sdPolyhedron(p)*s2;
+					return vec4(polyhedron, vec3(.7f, 1.0f, .5f));
+			}
+
+
+			struct PData{
+					float D;
+					vec3 COL;
+			};
+			PData map(vec3 P){
+					// vec4 fractal = IFS(P, iterations);
+					vec4 fractal = fractal_main(P, iterations);
+					float cut_plane = dot(cut_direction, P)-cut_position;
+
+					return PData(
+							max(fractal.x, -cut_plane),
+							cut_plane > EPS ? fractal.yzw : .5*vec3(1., .2, .2)+.5*fractal.yzw);
+			}
+
+			struct MData{
+					float D;
+					float mn;
+					vec3 COL;
+			};
+			MData march(vec3 O, vec3 D){
+					float t = 0.0f;
+					float mn = MAX_DIST;
+					PData d;
+					for(int i=0; i<MAX_ITER; i++){
+							d = map(O + t*D);
+							t += d.D;
+							mn = min(mn, d.D);
+							if(t > MAX_DIST) break;
+							if(d.D < MIN_DIST) break;
+					}
+					return MData(t, mn, d.COL);
+			}
+
+			float softshadow(in vec3 ro, in vec3 rd, float mint, float maxt, float k ){
+					float res = 1.0f;
+					for( float t=mint; t<maxt; ){
+							float h = map(ro + rd*t).D;
+							if( h<MIN_DIST ) return 0.0f;
+							res = min( res, k*h/t );
+							t += h;
+					}
+					return res;
+			}
+			float softshadow2( in vec3 ro, in vec3 rd, float mint, float maxt, float k ){
+					float res = 1.0f;
+					float ph = 1e20;
+					for( float t=mint; t<maxt; ){
+							float h = map(ro + rd*t).D;
+							if( h<MIN_DIST ) return 0.0f;
+							float y = h*h/(2.0f*ph);
+							float d = sqrt(h*h-y*y);
+							res = min( res, k*d/max(0.0f,t-y) );
+							ph = h;
+							t += h;
+					}
+					return res;
+			}
+
+			vec3 normal(vec3 p){
+					const vec2 X = vec2(EPS, 0.0f);
+					return (vec3(
+							map(p + X.xyy).D, map(p + X.yxy).D, map(p + X.yyx).D
+					)-vec3(map(p).D))/EPS;
+			}
+
+			void main() {
+					vec3 color = vec3(0.0f);
+
+					vec2 uv = vertTexCoord.st*2.0f-vec2(screen_ratio, 1.0f);
+					uv.y *= -1.0f;
+					vec3 ro = cam_position;
+					vec3 rd = (cam_direction * vec4(normalize(vec3(uv.xy, 3.0f)), 1.0f)).xyz;
+					//vec3 rd = normalize(vec3(uv.xy, 3));
+
+					//const vec3 SUN = normalize(vec3(1, 3, 1.5));
+					vec3 SUN = light_direction;
+					const vec3 SUN_COL = vec3(1.0f, .8f, .8f);
+
+					vec3 color_accumulator = vec3(1);
+					for(int B=0; B<reflection_bounces; B++){
+							MData mp = march(ro, rd);
+							vec3 P = ro + rd * mp.D;
+							//vec3 N = mp.N;
+							vec3 N = normal(P);
+							float sh = softshadow2(P + (MIN_DIST*3.0f)*N, SUN, 0.0f, 50.0f, 6.0f);
+
+							float diffuse = max(0.0f, dot(N, SUN));
+							float specular = pow(clamp(dot(reflect(-SUN, N), -rd), 0.0f, 1.0f), 8.0f);
+
+							if(mp.D < MAX_DIST){
+									// const vec3 COL = vec3(1, .5, .5);
+									//const vec3 COL = vec3(.5, .5, 1);
+									//const vec3 COL = vec3(.5, 1., .5);
+									color.rgb += color_accumulator*
+											(diffuse+specular)*mp.COL*SUN_COL*sh;
+									color_accumulator *= mp.COL*
+											mix(.2f, .65f, 1.0f-max(0.0f, dot(-rd, N)));
+									ro = P+N*(EPS*3.0f);
+									rd = reflect(rd, N);
+							}else{
+									color.rgb += color_accumulator*
+											vec3(.3f, .3f, .5f);
+									color.rgb += color_accumulator*
+											exp(1.0f-mp.mn*3.f)*vec3(1.0f, .5f+.5f*sin(time), 1.0f)*.4f;
+									break;
+							}
+					}
+
+					gl_FragColor = vec4(color, 1.0f);
+			}
+		</script>
 </head>
 <body>
     <canvas class="webgl"></canvas>
