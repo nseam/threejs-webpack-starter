@@ -12,41 +12,43 @@ const canvas = document.querySelector('canvas.webgl')
 // Scene
 const scene = new THREE.Scene()
 
-// Objects
-const geometry = new THREE.TorusGeometry( .7, .2, 16, 100 );
-
 // Materials
 
 console.log (document.getElementById('ps').textContent);
-
-const material = new THREE.ShaderMaterial({
-	uniforms: {
-		//cam_rot: new THREE.Vector2(-Math.PI * 0.15f, Math.PI * 0.2f),
-	},
-	vertexShader: document.getElementById('vs').textContent,
-	fragmentShader: document.getElementById('ps').textContent,
-})
-material.color = new THREE.Color(0xff0000)
-
-// Mesh
-const sphere = new THREE.Mesh(geometry,material)
-scene.add(sphere)
-
-// Lights
-
-const pointLight = new THREE.PointLight(0xffffff, 0.1)
-pointLight.position.x = 2
-pointLight.position.y = 3
-pointLight.position.z = 4
-scene.add(pointLight)
 
 /**
  * Sizes
  */
 const sizes = {
-    width: window.innerWidth,
-    height: window.innerHeight
+	width: window.innerWidth,
+	height: window.innerHeight
 }
+
+
+const texMatrix = new THREE.Matrix4();
+texMatrix.identity();
+
+const material = new THREE.ShaderMaterial({
+	uniforms: {
+		time: { value: 1.0 },
+		iterations: { value: 8.0 },
+		cam_position: new THREE.Uniform(new THREE.Vector3(0, 0, -3)),
+//		cam_direction: new THREE.Uniform(cam_direction),
+		light_direction: new THREE.Uniform(new THREE.Vector3(-0.5, 0.3, -0.7)),
+		lightNormal: new THREE.Uniform(new THREE.Vector3(0.2, -0.2, -0.7)),
+		screen_ratio: { value: sizes.width / sizes.height },
+		reflection_bounces: { value: 4 },
+		texMatrix: new THREE.Uniform(texMatrix),
+		cut_position: { value: -2 },
+		cut_direction: new THREE.Uniform(new THREE.Vector3(0, 0, -1)),
+	},
+	vertexShader: document.getElementById('vs').textContent,
+	fragmentShader: document.getElementById('ps').textContent,
+})
+material.color = new THREE.Color(0xFFFFFF)
+
+const geometry = new THREE.PlaneGeometry(2, 2, 1, 1);
+scene.add(new THREE.Mesh(geometry, material));
 
 window.addEventListener('resize', () =>
 {
@@ -67,21 +69,22 @@ window.addEventListener('resize', () =>
  * Camera
  */
 // Base camera
-const camera = new THREE.PerspectiveCamera(75, sizes.width / sizes.height, 0.1, 100)
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.0001, 10000)
 camera.position.x = 0
 camera.position.y = 0
-camera.position.z = 2
+camera.position.z = 0
 scene.add(camera)
 
 // Controls
-// const controls = new OrbitControls(camera, canvas)
-// controls.enableDamping = true
+const controls = new OrbitControls(camera, canvas)
+controls.enableDamping = true
 
 /**
  * Renderer
  */
 const renderer = new THREE.WebGLRenderer({
-    canvas: canvas
+  canvas: canvas,
+	antialias: true,
 })
 renderer.setSize(sizes.width, sizes.height)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -92,18 +95,39 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
 const clock = new THREE.Clock()
 
+const cam_position = new THREE.Vector3(0, 0, -3);
+const cam_direction = new THREE.Matrix4();
+cam_direction.identity();
+
+let yaw = 0;
+let distance = 9;
+
+let last_time = (new Date()).getMilliseconds();
+
 const tick = () =>
 {
+	const elapsedTime = clock.getElapsedTime()
 
-    const elapsedTime = clock.getElapsedTime()
+	yaw = elapsedTime / 1;
 
-    // Update objects
-    sphere.rotation.y = .5 * elapsedTime
+    controls.update()
 
-    // Update Orbital Controls
-    // controls.update()
 
-    // Render
+
+    const cameraRotationQuaternion = new THREE.Quaternion();
+		cameraRotationQuaternion.setFromEuler(new THREE.Euler(1.5, yaw, 0));
+
+		const cameraSourcePosition = new THREE.Vector3(0, 0, -distance);
+		cameraSourcePosition.applyQuaternion(cameraRotationQuaternion);
+
+		cam_direction.makeRotationFromQuaternion(cameraRotationQuaternion);
+
+		material.uniforms.cam_position = new THREE.Uniform(cameraSourcePosition);
+		material.uniforms.cam_direction = new THREE.Uniform(cam_direction);
+
+		material.uniforms.screen_ratio =  { value: sizes.width / sizes.height };
+		material.uniforms.time = { value: 0 };
+
     renderer.render(scene, camera)
 
     // Call tick again on the next frame
